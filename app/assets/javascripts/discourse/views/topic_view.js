@@ -170,29 +170,16 @@ Discourse.TopicView = Discourse.View.extend(Discourse.Scrolling, {
     }
   }.observes("Discourse.hasFocus"),
 
-  getPost: function($post){
-    var post, postView;
-    postView = Ember.View.views[$post.prop('id')];
-    if (postView) {
-      return postView.get('post');
-    }
-    return null;
-  },
-
   // Called for every post seen, returns the post number
-  postSeen: function($post) {
-    var post = this.getPost($post);
+  postSeen: function(post) {
+    if (!post) { return }
 
-    if (post) {
-      var postNumber = post.get('post_number');
-      if (postNumber > (this.get('controller.last_read_post_number') || 0)) {
-        this.set('controller.last_read_post_number', postNumber);
-      }
-      if (!post.get('read')) {
-        post.set('read', true);
-      }
-      return post.get('post_number');
+    var postNumber = post.get('post_number');
+    if (postNumber > (this.get('controller.last_read_post_number') || 0)) {
+      this.set('controller.last_read_post_number', postNumber);
     }
+    post.set('read', true);
+    return post.get('post_number');
   },
 
   resetExamineDockCache: function() {
@@ -227,23 +214,28 @@ Discourse.TopicView = Discourse.View.extend(Discourse.Scrolling, {
     @method processSeenPosts
   **/
   processSeenPosts: function() {
-    var rows = $('.topic-post.ready');
+    var rows = $('.topic-post');
     if (!rows || rows.length === 0) { return; }
 
     // if we have no rows
-    var info = Discourse.Eyeline.analyze(rows);
-    if(!info) { return; }
+    var info = Discourse.Eyeline.analyze(rows),
+        postStream = this.get('postStream');
+
+    if (!info) { return; }
 
     // We disable scrolling of the topic while performing initial positioning
     // This code needs to be refactored, the pipline for positioning posts is wack
     // Be sure to test on safari as well when playing with this
-    if(!Discourse.TopicView.disableScroll) {
+
+    if (!Discourse.TopicView.disableScroll) {
+      console.log('yes:' + info.onScreen[0]);
 
       // are we scrolling upwards?
       if(info.top === 0 || info.onScreen[0] === 0 || info.bottom === 0) {
         var $body = $('body'),
             $elem = $(rows[0]),
             distToElement = $body.scrollTop() - $elem.position().top;
+
         this.get('postStream').prependMore().then(function() {
           Em.run.next(function () {
             $('html, body').scrollTop($elem.position().top + distToElement);
@@ -254,27 +246,31 @@ Discourse.TopicView = Discourse.View.extend(Discourse.Scrolling, {
 
 
     // are we scrolling down?
-    var currentPost;
-    if(info.bottom === rows.length-1) {
-      currentPost = this.postSeen($(rows[info.bottom]));
+    var bottomPostView = Ember.View.views[rows[info.bottom].id],
+        bottomPost = bottomPostView.get('post'),
+        lastLoadedPost = postStream.get('lastLoadedPost'),
+        currentPost;
+
+    if (bottomPost === lastLoadedPost) {
+      currentPost = this.postSeen(bottomPost);
       this.get('postStream').appendMore();
     }
 
-
     // update dock
-    this.updateDock(Ember.View.views[rows[info.bottom].id]);
+    this.updateDock(bottomPostView);
 
     // mark everything on screen read
-    var topicView = this;
+    var self = this;
     _.each(info.onScreen,function(item){
-      var seen = topicView.postSeen($(rows[item]));
+      var postView = Ember.View.views[rows[item].id],
+          seen = self.postSeen(postView.get('post'));
+
       currentPost = currentPost || seen;
     });
 
     var currentForPositionUpdate = currentPost;
     if (!currentForPositionUpdate) {
-      var postView = this.getPost($(rows[info.bottom]));
-      if (postView) { currentForPositionUpdate = postView.get('post_number'); }
+      if (bottomPost) { currentForPositionUpdate = bottomPost.get('post_number'); }
     }
 
     if (currentForPositionUpdate) {
@@ -371,28 +367,31 @@ Discourse.TopicView.reopenClass({
   // Scroll to a given post, if in the DOM. Returns whether it was in the DOM or not.
   jumpToPost: function(topicId, postNumber, avoidScrollIfPossible) {
     this.disableScroll = true;
+
     Em.run.scheduleOnce('afterRender', function() {
-      var rows = $('.topic-post.ready');
+      var rows = $('.topic-post');
 
       // Make sure we're looking at the topic we want to scroll to
       if (topicId !== parseInt($('#topic').data('topic-id'), 10)) { return false; }
 
       var $post = $("#post_" + postNumber);
+      console.log($post.length);
       if ($post.length) {
 
-        var postTop = $post.offset().top;
-        var highlight = true;
-
-        var header = $('header');
-        var title = $('#topic-title');
-        var expectedOffset = title.height() - header.find('.contents').height();
+        console.log('a');
+        var postTop = $post.offset().top,
+            highlight = true,
+            header = $('header'),
+            title = $('#topic-title'),
+            expectedOffset = title.height() - header.find('.contents').height();
 
         if (expectedOffset < 0) {
           expectedOffset = 0;
         }
 
-        var offset = (header.outerHeight(true) + expectedOffset);
-        var windowScrollTop = $('html, body').scrollTop();
+        console.log('b');
+        var offset = (header.outerHeight(true) + expectedOffset),
+            windowScrollTop = $('html, body').scrollTop();
 
         if (avoidScrollIfPossible && postTop > windowScrollTop + offset && postTop < windowScrollTop + $(window).height() + 100) {
           // in view
@@ -414,30 +413,29 @@ Discourse.TopicView.reopenClass({
             //      due to vanishing header, we should not be rendering it imho until after
             //      we render the posts
 
-            var first = true;
-            var t = new Date();
-            // console.log("DESIRED:" + desired);
-            var enforceDesired = function(){
-              if($(window).scrollTop() !== desired) {
-                console.log("GOT EVENT " + $(window).scrollTop());
-                console.log("Time " + (new Date() - t));
-                console.trace();
-                if(first) {
-                  $(window).scrollTop(desired);
-                  first = false;
-                }
-                // $(document).unbind("scroll", enforceDesired);
-              }
-            };
-
+            var first = true,
+                t = new Date(),
+                enforceDesired = function(){
+                  if($(window).scrollTop() !== desired) {
+                    console.log("GOT EVENT " + $(window).scrollTop());
+                    console.log("Time " + (new Date() - t));
+                    console.trace();
+                    if(first) {
+                      $(window).scrollTop(desired);
+                      first = false;
+                    }
+                    // $(document).unbind("scroll", enforceDesired);
+                  }
+                };
             // uncomment this line to help debug this issue.
             // $(document).scroll(enforceDesired);
           }
         }
 
+        console.log('c');
         if(highlight) {
-          var $contents = $('.topic-body .contents', $post);
-          var origColor = $contents.data('orig-color') || $contents.css('backgroundColor');
+          var $contents = $('.topic-body .contents', $post),
+              origColor = $contents.data('orig-color') || $contents.css('backgroundColor');
 
           $contents.data("orig-color", origColor);
           $contents
@@ -447,7 +445,7 @@ Discourse.TopicView.reopenClass({
               $contents.removeClass('highlighted');
             });
         }
-
+        console.log('d');
         setTimeout(function(){Discourse.TopicView.disableScroll = false;}, 500);
       }
     });

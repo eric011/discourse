@@ -172,18 +172,17 @@ Discourse.PostView = Discourse.GroupedView.extend(Ember.Evented, {
 
   // Add the quote controls to a post
   insertQuoteControls: function() {
-    var postView = this;
-
+    var self = this;
     return this.$('aside.quote').each(function(i, e) {
       var $aside = $(e);
-      postView.updateQuoteElements($aside, 'chevron-down');
+      self.updateQuoteElements($aside, 'chevron-down');
       var $title = $('.title', $aside);
 
       // Unless it's a full quote, allow click to expand
       if (!($aside.data('full') || $title.data('has-quote-controls'))) {
         $title.on('click', function(e) {
           if ($(e.target).is('a')) return true;
-          postView.toggleQuote($aside);
+          self.toggleQuote($aside);
         });
         $title.data('has-quote-controls', true);
       }
@@ -191,7 +190,7 @@ Discourse.PostView = Discourse.GroupedView.extend(Ember.Evented, {
   },
 
   willDestroyElement: function() {
-    Discourse.ScreenTrack.current().stopTracking(this.$().prop('id'));
+    Discourse.ScreenTrack.current().stopTracking(this.get('elementId'));
   },
 
   didInsertElement: function() {
@@ -211,7 +210,5 @@ Discourse.PostView = Discourse.GroupedView.extend(Ember.Evented, {
 
     // Find all the quotes
     this.insertQuoteControls();
-
-    $post.addClass('ready');
   }
 });
